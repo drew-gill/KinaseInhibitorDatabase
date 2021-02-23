@@ -8,7 +8,7 @@ import rcsbCategorizeFunctions
 mydb = mysql.connector.connect(
   host="localhost",
   user="root",
-  passwd="Easypassword1!",
+  passwd="kinasedb",
   database="research"
 )
 

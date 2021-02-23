@@ -12,7 +12,7 @@ while(loggingIn):
         mydb = mysql.connector.connect(
         host="localhost",
         user="root",
-        passwd= rootPwd, #Ep1!
+        passwd= rootPwd,
         database="research"
         )
 

@@ -14,6 +14,7 @@ mydb = mysql.connector.connect(
 
 globalStructures = None
 outputDirectory = "STRUCTURAL_FILES/"
+dumpSubdirectory = "DATABASE_DUMP/"
 pmvPath = '"C:\Program Files (x86)\MGLTools-1.5.6\pmv.bat"'
 chimeraXPath = ""
 chimeraPath = ""
@@ -90,7 +91,7 @@ def GetInformationFromID(drugbankID=None, uniprotID=None):
     stringOutput = ""
     mycursor = mydb.cursor()       
     if(drugbankID != None):
-        structureQuery = "SELECT name, description, chemSpider, pubchem_substance, pubchem_compound, INCHI_KEY, smiles, company, approved, atc FROM kinasedrugs WHERE drugbank_id = %s"
+        structureQuery = "SELECT name, description, chemSpider, pubchem_compound, chEMBL, INCHI_KEY, smiles, company, phase, atc FROM kinasedrugs WHERE drugbank_id = %s"
         mycursor.execute(structureQuery, [drugbankID])
     elif(uniprotID != None):
         structureQuery = "SELECT HGNC_Name, Manning_Name, descriptive_name, x_Name, bindingDBID, kinase_group, kinase_family, kinase_subfamily FROM kinaseproteins WHERE uniprot_id = %s"
@@ -112,7 +113,7 @@ def GetInformationFromID(drugbankID=None, uniprotID=None):
 def PrintInformationFromID(results, drugbankID=None, uniprotID=None):
     stringOutput = ""
     if(drugbankID != None):
-        labels = ["Name","Description", "ChemSpider", "Pubchem Substance", "Pubchem Compound", "INCHI", "SMILES", "Company", "FDA Approved", "ATC Code"]
+        labels = ["Name","Description", "ChemSpider", "Pubchem Compound", "chEMBL", "INCHI", "SMILES", "Company", "Phase", "ATC Code"]
         stringOutput += ("DrugBank ID: %s\n" % drugbankID)
     elif(uniprotID != None):
         labels = ["HGNC Name", "Manning Name", "Description", "XName", "BindingDB ID", "Kinase Group", "Kinase Family", "Kinase Subfamily"]
@@ -121,10 +122,6 @@ def PrintInformationFromID(results, drugbankID=None, uniprotID=None):
         stringOutput += "ID not set"
 
     for i, item in enumerate(results):
-        if(item == 1):
-            item = "True"
-        if(item == 0):
-            item = "False"
         if(item == None):
             item = "NULL"
         stringOutput += ("\n" + labels[i] + ": %s\n" % str(item))
@@ -133,7 +130,11 @@ def PrintInformationFromID(results, drugbankID=None, uniprotID=None):
     return stringOutput
 
 def getAndPrintStructures(drugbankID=None, uniprotID=None, drug_or_protein=None):
+    if(drug_or_protein == "BINDING" and (drugbankID == None or uniprotID == None)):
+        return "To find binding structures, enter both a protein and drug identifier"
+    
     structs = GetStructures(drugbankID=drugbankID, uniprotID=uniprotID, drug_or_protein=drug_or_protein)
+    
     stringOutput = StructureChoice(structs, drug_or_protein)
     global globalStructures
     globalStructures = structs
@@ -290,7 +291,7 @@ def PrintDBObject(item):
     if(item[1] != None):
         stringOutput += ("\n\tDrugBank ID: %s (%s)" % (item[1], GetNameFromValidID(item[1]))) #drugbank ID if available
     if(item[2] != None):
-        stringOutput += ("\n\tUniProt ID: %s" % (item[2], GetNameFromValidID(item[2]))) #uniprotID if available
+        stringOutput += ("\n\tUniProt ID: %s (%s)" % (item[2], GetNameFromValidID(item[2]))) #uniprotID if available
     if(item[3] != None):
         stringOutput += ("\n\tRCSB ID: %s" % item[3]) #RCSB ID, if available
 
@@ -340,3 +341,24 @@ def SaveStructure(fileName):
         stringOutput += ("Error saving structure")
 
     return stringOutput
+
+#gets all data stored in the database and stores it in a CSV file format
+#save to OUTPUTDIR/DUMPDIR/prefix_table.csv
+def DumpDataToCSV(fileName, includeStructuralFiles=False):
+    tableNames = ["aliases_dbid", "drug_and_target", "kinasedrugs", "kinaseproteins"]
+
+    if(includeStructuralFiles):
+        tableNames.append("structuralfiles")
+
+    for name in tableNames:
+        query = "SELECT * FROM %s" % name
+
+        mycursor = mydb.cursor()
+        mycursor.execute(query)
+        result = mycursor.fetchall()
+
+        csvWriter = csv.writer(open(outputDirectory + dumpSubdirectory + fileName + ("_%s.csv" % name), "w", encoding="utf-8"))
+        for row in result:
+            csvWriter.writerow(row)
+
+

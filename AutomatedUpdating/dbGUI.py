@@ -5,8 +5,8 @@ from tkinter import filedialog
 from databaseAccessHelper import *
 
 def helperChoice():
-    proteinID = SearchDatabaseByName(proteinNameID.get(), "PROTEIN")
-    drugID = SearchDatabaseByName(drugNameID.get(), "DRUG")
+    proteinID = SearchDatabaseByName(proteinNameID.get().strip(), "PROTEIN")
+    drugID = SearchDatabaseByName(drugNameID.get().strip(), "DRUG")
     newText = ""
 
 
@@ -38,6 +38,10 @@ def saveHelper():
 
     setText(stringOutput)
 
+def dumpDBToFile():
+    DumpDataToCSV(dumpFileName.get())
+    
+
 def setText(newText):
     textBox.delete(1.0, END)
     textBox.insert(END, newText)
@@ -52,6 +56,7 @@ if __name__ == '__main__':
     proteinNameID = StringVar()
     drugNameID = StringVar()
     fileNumber = StringVar()
+    dumpFileName = StringVar()
     openPMV = IntVar()
 
     Label(root, text="Choose 1: ").grid(row=0, pady=10)
@@ -81,6 +86,10 @@ if __name__ == '__main__':
     Entry(root, textvariable=fileNumber).grid(row=6, column=1)
     Button(root, text="Download", command=saveHelper).grid(row=6, column=2)
     Checkbutton(root, text="Open in PMV", variable=openPMV).grid(row=6, column=3)
+
+    Label(root, text="Dump File Prefix: ").grid(row=7, column=0)
+    Entry(root, textvariable=dumpFileName).grid(row=7, column=1)
+    Button(root, text="Dump!", command=dumpDBToFile).grid(row=7, column=2)
 
 
     root.mainloop()

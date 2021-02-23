@@ -3,7 +3,13 @@ import csv
 from zipfile import ZipFile
 from io import BytesIO
 import mysql.connector
-from openbabel import openbabel
+#from openbabel import openbabel
+import os
+import subprocess
+
+#might work with 3.1.1, but 2.4.0 (or older) was the only one that worked with generating3D coordinates
+openbabelExecutablePath = "C:\Program Files\OpenBabel-2.4.0\obabel"
+tempDataPath = "TEMP_DATA/"
 
 mydb = mysql.connector.connect(
   host="localhost",
@@ -11,6 +17,21 @@ mydb = mysql.connector.connect(
   passwd="Easypassword1!",
   database="research"
 )
+
+#The ordering of traits does not seem to be consistent month-to-month for PKIDB updated database of drugs
+#Examine SDF file and update the index values below as necessary
+pkidbSDFOrdering = {
+    "name": 0,
+    "phase": 7, #phase
+    "company": 2, #applicants
+    "smiles": 4, #canonical_smiles
+    "inchi": 15, #stdInchiKey
+    "description": 22, #AKA indications
+    "aliases1": 1, #brand name
+    "aliases2": 9, #other aliases
+    "dbLinks": 17, #database links, e.g. chemspider.com
+    "targets": 32 #kinase targets, e.g. ABL1
+}
 
 def combineURLandSplit(startIndex, splitInfo):
     stringOut = splitInfo[startIndex]
@@ -73,37 +94,43 @@ def getKnownInhibitors():
 
     for i,item in enumerate(inhibitorsAndInfo):
         inhibitorDictionary = {
-            "name": inhibitorsAndInfo[i][0],
+            "name": inhibitorsAndInfo[i][pkidbSDFOrdering["name"]],
             "aliases": None, #separate, append stripped aliases in [23]
-            "company": inhibitorsAndInfo[i][3],
+            "phase": int(inhibitorsAndInfo[i][pkidbSDFOrdering["phase"]][0]),
+            "company": inhibitorsAndInfo[i][pkidbSDFOrdering["company"]],
             "drugbankID": None, #separate
             "pubchemCompound": None, #separate
             "chemspider": None, #separate
-            "smiles": inhibitorsAndInfo[i][18],
-            "inchi": inhibitorsAndInfo[i][19],
+            "smiles": inhibitorsAndInfo[i][pkidbSDFOrdering["smiles"]],
+            "inchi": inhibitorsAndInfo[i][pkidbSDFOrdering["inchi"]],
             "targets": None, #separate
-            "description": inhibitorsAndInfo[i][15],
-            "fda": inhibitorsAndInfo[i][24] == "Y", #convert to bool, then to tinyint
+            "description": inhibitorsAndInfo[i][pkidbSDFOrdering["description"]],
+            "chembl": None #separate
         }
 
-        if(inhibitorDictionary["fda"] == True):
-            inhibitorDictionary["fda"] = 1
-        else:
-            inhibitorDictionary["fda"] = 0
-
         #GET ALIASES
-        if(inhibitorsAndInfo[i][1] != None):
-            inhibitorDictionary["aliases"] = inhibitorsAndInfo[i][1].split(";")
-            for item in inhibitorsAndInfo[i][23]:
+        possibleAliases = inhibitorsAndInfo[i][pkidbSDFOrdering["aliases1"]]
+
+        if(possibleAliases != None and possibleAliases.strip() != ""):
+            inhibitorDictionary["aliases"] = inhibitorsAndInfo[i][pkidbSDFOrdering["aliases1"]].split(";")
+        else:
+            inhibitorDictionary["aliases"] = []
+        
+        possibleAliases = inhibitorsAndInfo[i][pkidbSDFOrdering["aliases2"]]
+
+        if(isinstance(possibleAliases, list)):
+            for item in inhibitorsAndInfo[i][pkidbSDFOrdering["aliases2"]]:
                 inhibitorDictionary["aliases"].append(item.strip())
+        elif(possibleAliases != ""):
+            inhibitorDictionary["aliases"].append(possibleAliases.strip())
         
         #GET IDs
-        for item in inhibitorsAndInfo[i][4]:
+        for item in inhibitorsAndInfo[i][pkidbSDFOrdering["dbLinks"]]:
             if('chemspider' in item):
                 idIndexStart = getLastIndex(item, "Chemical-Structure.") #starting index of the id
                 idIndexEnd = item.find(".html") #ending index of id
-
                 inhibitorDictionary["chemspider"] = item[idIndexStart:idIndexEnd]
+                continue
 
             if('pubchem' in item):
                 if('/compound/' in item):
@@ -111,14 +138,22 @@ def getKnownInhibitors():
                     inhibitorDictionary["pubchemCompound"] = item[idIndexStart:]
                 else:
                     print("Substance?")
+                continue
+                
 
             if('drugbank' in item):
                 idIndexStart = getLastIndex(item, '/drugs/')
                 inhibitorDictionary["drugbankID"] = item[idIndexStart:]
+                continue
+
+            if('/chembldb/compound/inspect/' in item):
+                idIndexStart = getLastIndex(item, '/chembldb/compound/inspect/')
+                inhibitorDictionary["chembl"] = item[idIndexStart:]
+                continue
 
         #GET TARGETS
-        if(inhibitorsAndInfo[i][16] != None):
-            inhibitorDictionary["targets"] = inhibitorsAndInfo[i][16].split("; ")        
+        if(inhibitorsAndInfo[i][pkidbSDFOrdering["targets"]] != None):
+            inhibitorDictionary["targets"] = inhibitorsAndInfo[i][pkidbSDFOrdering["targets"]].split("; ")        
 
         outputDictionaries.append(inhibitorDictionary)
     
@@ -177,6 +212,7 @@ def GetLatestDrugbankIdentifiers():
 def JoinDrugbankData(knownInhibitorDictionaries):
     (latestDrugbankData, idToAliasDict) = GetLatestDrugbankIdentifiers()
 
+    #using known names and aliases of kinase inhibitors, look for drugbankIDs
     for index, knownInhibitor in enumerate(knownInhibitorDictionaries):
         if(knownInhibitor["name"] in latestDrugbankData):
             knownInhibitor["drugbankID"] = latestDrugbankData[knownInhibitor["name"]]
@@ -184,8 +220,8 @@ def JoinDrugbankData(knownInhibitorDictionaries):
             for alias in knownInhibitor["aliases"]:
                 if(alias in latestDrugbankData):
                     knownInhibitor["drugbankID"] = latestDrugbankData[alias]
-    knownInhibitorDictionaries[index] = knownInhibitor
 
+    #add other known names of the inhibitors from drugbank, if available.
     for index, knownInhibitor in enumerate(knownInhibitorDictionaries):
         if(knownInhibitor["drugbankID"] != None):
             if(knownInhibitor["drugbankID"] in idToAliasDict):
@@ -220,33 +256,38 @@ def GetSpecificDrugbankData(inhibitorData):
                     drug["targets"].append(targetUniprot) 
 
             drug["targets"] = RemoveDuplicateNonKinaseUniprots(drug["targets"])
-            UpdateInhibitorInDB(drug)
+            UpdateInhibitorInDB(drug) #update mySQL db with new data from queries
 
             if(drug["drugbankID"] != None):
                 FindConvertUploadStructure(drug["drugbankID"])
 
-
-
     return inhibitorData
 
+#obabel 3.1 does not work for some reason. Use obabel 2.4
 def FindConvertUploadStructure(drugbankID):
     cursor = mydb.cursor()
 
     getURL = "https://www.drugbank.ca/structures/small_molecule_drugs/%s.sdf" % drugbankID
     getFile = requests.get(getURL, allow_redirects=True)
-    newFileName = "3D_%s.pdb" % drugbankID
+    newFileName = "%s.pdb" % drugbankID
 
-    obConversion = openbabel.OBConversion()
-    obConversion.SetInAndOutFormats("sdf", "pdb")
-    mol = openbabel.OBMol()
-    obConversion.ReadString(mol, getFile.text)
-    obConversion.AddOption("d")
-    obConversion.AddOption("gen3d")
-    obConversion.Convert()
-    binaryFile = obConversion.WriteString(mol).encode()
+    tempInputFile = tempDataPath + "TEMPORARY_FILE.sdf"
+    tempOutputFile = tempDataPath + newFileName
+
+    with open(tempInputFile, mode="w", encoding="utf-8") as sdf:
+        sdf.write(getFile.text)
+    
+    print(drugbankID)
+    
+    #"C:\Program Files\OpenBabel-2.4.0\obabel" test/DB15247.sdf -O test/DB15247test2.pdb -d --gen3d
+    command = ('"%s" %s -O %s -d --gen3d') % (openbabelExecutablePath, tempInputFile, tempOutputFile)
+
+    subprocess.call(command)
+
+    with open(tempOutputFile, mode="rb") as binFile:
+        binaryFile = binFile.read()
+
     insertVals = (binaryFile, drugbankID, newFileName) #binary format of converted PDB file, with 3D coordinates and Hydrogens removed 
-
-
     databaseQuery = "SELECT structurefilename FROM structuralfiles WHERE drugbank_id = %s AND structurefilename = %s"
     cursor.execute(databaseQuery, [drugbankID, newFileName])
 
@@ -260,6 +301,8 @@ def FindConvertUploadStructure(drugbankID):
     mydb.commit()
 
     cursor.close()
+
+    os.remove(tempOutputFile)
 
 
 def RemoveDuplicateNonKinaseUniprots(uniprotTargets):
@@ -281,7 +324,7 @@ def RemoveDuplicateNonKinaseUniprots(uniprotTargets):
         if(outputID in uniprotTargetIDs): #remove duplicates
             uniprotTargets.remove(target)
         else:
-            uniprotTargetIDs.add(target)
+            uniprotTargetIDs.append(target)
 
     cursor.close()
     return uniprotTargetIDs
@@ -294,11 +337,11 @@ def UpdateInhibitorInDB(inhibitorData):
     cursor.execute(databaseQuery, (inhibitorData["drugbankID"], inhibitorData["name"]))
     outputName = cursor.fetchone() #check if inhibitor is already in db
     if(outputName != None and len(outputName) == 1):
-        databaseQuery = "UPDATE kinasedrugs SET company = %s, drugbank_id = %s, pubchem_compound = %s, chemspider = %s, smiles = %s, inchi_key = %s, description = %s, approved = %s WHERE name = %s"
+        databaseQuery = "UPDATE kinasedrugs SET phase = %s, chembl = %s, company = %s, drugbank_id = %s, pubchem_compound = %s, chemspider = %s, smiles = %s, inchi_key = %s, description = %s WHERE name = %s"
     else:
-        databaseQuery = "INSERT INTO kinasedrugs (company, drugbank_id, pubchem_compound, chemspider, smiles, inchi_key, description, approved, name) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"
+        databaseQuery = "INSERT INTO kinasedrugs (phase, chembl, company, drugbank_id, pubchem_compound, chemspider, smiles, inchi_key, description, name) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
     
-    cursor.execute(databaseQuery, (inhibitorData["company"], inhibitorData["drugbankID"], inhibitorData["pubchemCompound"], inhibitorData["chemspider"], inhibitorData["smiles"], inhibitorData["inchi"], inhibitorData["description"], inhibitorData["fda"], inhibitorData["name"]))
+    cursor.execute(databaseQuery, (inhibitorData["phase"], inhibitorData["chembl"], inhibitorData["company"], inhibitorData["drugbankID"], inhibitorData["pubchemCompound"], inhibitorData["chemspider"], inhibitorData["smiles"], inhibitorData["inchi"], inhibitorData["description"], inhibitorData["name"]))
     mydb.commit()
 
     #UPDATE THE aliases_dbid TABLE
@@ -329,7 +372,9 @@ def UpdateInhibitorInDB(inhibitorData):
 
 def FullUpdate():
     latestKinaseInhibitors = getKnownInhibitors()
+    print("Got latest inhibitors")
     latestKinaseInhibitors = JoinDrugbankData(latestKinaseInhibitors)
+    print("Got drugbank data")
     GetSpecificDrugbankData(latestKinaseInhibitors)
 
     print(latestKinaseInhibitors)
